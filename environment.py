@@ -145,8 +145,8 @@ class Environment:
         # Simple check if the car's center is on a road
         return not self._is_on_road(x, y)
     
-    def get_nearest_intersection(self, x, y):
-        """Get the nearest intersection to a given point."""
+    def get_nearest_intersection(self):
+        """Get the intersection coordinates."""
         # In this simple environment, there's only one intersection
         intersection_x = self.WIDTH // 2
         intersection_y = self.HEIGHT // 2
