@@ -1,0 +1,4 @@
+Project 3: Self-Driving Car Simulation with Real-Time AI Traffic Control
+
+Project Brief:
+Developed a simulation of a self-driving car system integrated with real-time AI traffic management. The project focuses on navigation using computer vision and reinforcement learning while interacting with other AI-controlled entities in a virtual smart city environment. The simulation evaluates traffic flow, obstacle avoidance, and dynamic routing.
