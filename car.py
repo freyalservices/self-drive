@@ -51,10 +51,37 @@ class Car:
         # Visualization properties
         self.show_sensors = True
         self.sensor_lines = []
+        
+        # Timeout counter to prevent deadlocks
+        self.stuck_counter = 0
+        self.max_stuck_time = 120  # frames
+        self.last_position = (self.x, self.y)
+        self.position_check_interval = 10
+        self.frames_since_position_check = 0
     
     def update(self, other_cars):
         if self.reached_destination or self.crashed:
             return
+            
+        # Check if car is stuck
+        self.frames_since_position_check += 1
+        if self.frames_since_position_check >= self.position_check_interval:
+            self.frames_since_position_check = 0
+            current_position = (self.x, self.y)
+            distance_moved = math.sqrt((current_position[0] - self.last_position[0])**2 + 
+                                     (current_position[1] - self.last_position[1])**2)
+            
+            if distance_moved < 2:  # If barely moved
+                self.stuck_counter += 1
+            else:
+                self.stuck_counter = 0
+                
+            self.last_position = current_position
+            
+            # If stuck for too long, give a push
+            if self.stuck_counter > self.max_stuck_time:
+                self.speed = self.max_speed * 0.5
+                self.stuck_counter = 0
         
         # Get sensor inputs
         sensor_data = self._get_sensor_data(other_cars)
@@ -73,13 +100,18 @@ class Car:
         # Get action from neural network
         acceleration, steering = self.brain.get_action(state)
         
-        # Apply actions
-        self.acceleration = acceleration
+        # Apply actions with a bias toward maintaining forward motion to avoid stopping
+        # Add a small positive bias to acceleration to encourage forward movement
+        self.acceleration = acceleration + 0.1
         self.steering = steering * 5  # Scale steering for better control
         
         # Update speed based on acceleration
         self.speed += self.acceleration * 0.1
         self.speed = max(-self.max_speed/2, min(self.max_speed, self.speed))
+        
+        # Prevent complete stopping
+        if abs(self.speed) < 0.5:
+            self.speed = 0.5 if self.speed >= 0 else -0.5
         
         # Update angle based on steering
         self.angle += self.steering * (self.speed / self.max_speed)
@@ -99,9 +131,9 @@ class Car:
             self.reached_destination = True
             self.speed = 0
         
-        # Obey traffic signals
+        # Obey traffic signals, but don't completely stop
         if self._should_stop_for_signal():
-            self.speed = max(0, self.speed - 0.5)  # Gradual slowdown
+            self.speed = max(0.5, self.speed - 0.5)  # Slow down but keep minimum speed
     
     def draw(self, screen):
         # Draw the car as a rotated rectangle
@@ -122,6 +154,9 @@ class Car:
             self.y + 15 * math.sin(math.radians(self.angle))
         )
         pygame.draw.line(screen, (0, 0, 0), (self.x, self.y), indicator_end, 2)
+        
+        # Draw a line to the destination to help debugging
+        pygame.draw.line(screen, (0, 0, 255), (self.x, self.y), self.destination, 1)
     
     def _get_sensor_data(self, other_cars):
         """Get distances from sensors in 5 directions."""
@@ -199,7 +234,8 @@ class Car:
         dx = self.destination[0] - self.x
         dy = self.destination[1] - self.y
         distance = math.sqrt(dx**2 + dy**2)
-        return distance < 30  # Destination radius
+        # Increase the destination detection radius to make it easier to reach
+        return distance < 50  # Increased from 30 to 50
     
     def _get_angle_to_destination(self):
         """Calculate angle to destination relative to current heading."""
@@ -229,4 +265,38 @@ class Car:
     
     def _should_stop_for_signal(self):
         """Determine if the car should stop for a red light."""
-        return self.traffic_controller.should_stop(self.x, self.y, self.angle)
+        intersection_x, intersection_y = self.environment.get_nearest_intersection()
+        
+        # Calculate distance to the intersection
+        dx = intersection_x - self.x
+        dy = intersection_y - self.y
+        distance = math.sqrt(dx**2 + dy**2)
+        
+        # Only consider cars close to the intersection (within 80 pixels)
+        # Reduced from 100 to 80 to make cars stop closer to the intersection
+        if distance > 80:
+            return False
+        
+        # Determine which lane the car is in based on its position and angle
+        is_north_south = abs(math.cos(math.radians(self.angle))) < 0.5
+        approaching_intersection = (
+            (angle_between_0_180(self.angle) < 180 and dy > 0) or  # Coming from north
+            (angle_between_0_180(self.angle) > 180 and dy < 0) or  # Coming from south
+            (angle_between_0_180(self.angle) > 90 and angle_between_0_180(self.angle) < 270 and dx > 0) or  # Coming from west
+            ((angle_between_0_180(self.angle) < 90 or angle_between_0_180(self.angle) > 270) and dx < 0)  # Coming from east
+        )
+        
+        if not approaching_intersection:
+            return False
+        
+        # Check if the car should stop based on the current traffic phase
+        if is_north_south:
+            # If in North-South lane and light is red for North-South
+            return self.traffic_controller.current_phase == 1
+        else:
+            # If in East-West lane and light is red for East-West
+            return self.traffic_controller.current_phase == 0
+            
+def angle_between_0_180(angle):
+    """Convert any angle to 0-360 range"""
+    return angle % 360
